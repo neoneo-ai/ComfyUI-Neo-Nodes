@@ -134,3 +134,15 @@ python tools/gallery_deploy_oss.py --source <output_dir> --bucket <bucket> --pre
 
 The deployed OSS source is configured through `configs/oss_presets.json` and pulled at runtime by
 `gallery_oss.py` into `gallery/oss_cache/`.
+
+The Backyard page (`/neo-studio-backyard`) follows the same incremental semantics: its source directory is
+resolved against the data root, and a source directory that holds the media files directly
+(`data/gallery/presets/<one preset dir>`) is processed as one incremental directory. The merge base is the
+cloud `index.json` from `configs/oss_presets.json -> index_url` first, and the output directory's local
+`index.json` only when that fetch fails — so a machine that never ran the preprocessing locally cannot wipe
+the other cloud directories. Ticking "完成后上传 OSS" chains the upload right after the preprocessing and
+skips files whose ETag already matches; the key prefix gets its trailing `/` added, so a prefix written as
+`/neo/presets` still lands on the cloud `neo/presets/index.json`. When an upload writes new files, the
+gallery's cloud index cache is force-refreshed (the same path as `/neo_gallery/sync_oss`), so the new
+directory shows up on the asset page at once; without that refresh it stays invisible until the
+`sync_interval_hours` cache (24 h by default) expires.

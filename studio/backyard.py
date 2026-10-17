@@ -51,15 +51,26 @@ def _mask_config(cfg: dict) -> dict:
     return out
 
 
-PLUGIN_ROOT = Path(__file__).parent
-
-
 def _resolve_dir(p: str) -> Path:
-    """相对路径基于插件根目录解析，绝对路径原样返回。"""
+    """相对路径基于数据根解析，绝对路径原样返回。
+
+    配置里存的是 gallery/presets/ 这种相对路径，素材在数据根的 gallery 下；插件目录那份
+    gallery/presets 是空的，按插件根解析会让预处理扫到空目录，写出一个空 index.json。"""
     path = Path(p)
     if not path.is_absolute():
-        path = PLUGIN_ROOT / path
+        path = plugin_paths.DATA_ROOT / path
     return path.resolve()
+
+
+def _key_prefix(prefix: str) -> str:
+    """OSS key 前缀归一化：去掉首部 /，补上尾部 /。
+
+    前缀写成 /neo/presets 时 f"{prefix}{rel}" 拼出 neo/presetsindex.json，和云端
+    neo/presets/index.json 不是同一个 key，上传成功的索引素材库永远读不到。"""
+    p = (prefix or "").strip().lstrip("/")
+    if p and not p.endswith("/"):
+        p += "/"
+    return p
 
 
 # ====== SSE helper ======
@@ -202,8 +213,31 @@ def _load_existing_index(index_path: Path) -> dict | None:
     return None
 
 
+def _oss_presets_config() -> dict:
+    """云端预设源配置（configs/oss_presets.json）：index_url 是增量合并的基准。"""
+    try:
+        data = json.loads((plugin_paths.CONFIGS_DIR / "oss_presets.json").read_text(encoding="utf-8-sig"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _fetch_index_from_url(url: str) -> dict | None:
+    """拉云端最新的 index.json 作为增量合并基准。"""
+    import urllib.request
+    try:
+        with urllib.request.urlopen(url, timeout=30) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+    except Exception as e:
+        print(f"  [WARN] 拉取云端 index 失败: {e}")
+        return None
+    if isinstance(data.get("directories"), dict):
+        return data
+    return None
+
+
 def run_preprocess(source_dir: str, output_dir: str, size: int = 320, copy_media: bool = True, dirs: list | None = None) -> dict:
-    """执行预处理，返回摘要。dirs 非空时为增量模式（合并到已有 index）。"""
+    """执行预处理，返回摘要。dirs 非空、或源目录内直接放素材时为增量模式（合并到已有 index）。"""
     src = Path(source_dir).resolve()
     out = Path(output_dir).resolve()
     if not src.exists():
@@ -212,18 +246,6 @@ def run_preprocess(source_dir: str, output_dir: str, size: int = 320, copy_media
 
     thumb_dir = out / "thumbnails"
     thumb_dir.mkdir(parents=True, exist_ok=True)
-
-    # 增量模式：加载已有 index 作为合并基础
-    index_path = out / "index.json"
-    existing = None
-    if dirs:
-        existing = _load_existing_index(index_path)
-        if existing:
-            print(f"  增量模式: 合并到已有 {len(existing['directories'])} 个目录")
-
-    index = {"version": 1, "generated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "base_url": "", "directories": {}}
-    if existing:
-        index["base_url"] = existing.get("base_url", "")
 
     if dirs:
         subdirs = []
@@ -237,6 +259,27 @@ def run_preprocess(source_dir: str, output_dir: str, size: int = 320, copy_media
             raise ValueError("没有有效的子目录可处理")
     else:
         subdirs = sorted([p for p in src.iterdir() if p.is_dir()])
+        # 源目录本身就是单个预设目录（gallery/presets/仙侠玄幻人物 这种直接放 png+txt 的目录）：
+        # 整轮只可能产出一个目录，按增量处理，别把云端其余目录冲掉
+        if not subdirs and any(p.suffix.lower() in ALL_MEDIA_EXTENSIONS for p in src.iterdir() if p.is_file()):
+            subdirs = [src]
+
+    index_path = out / "index.json"
+    oss_cfg = _oss_presets_config()
+    existing = None
+    if dirs or subdirs == [src]:
+        url = str(oss_cfg.get("index_url", "")).strip() if oss_cfg.get("enabled", True) else ""
+        if url:
+            existing = _fetch_index_from_url(url)
+            if existing:
+                print(f"  增量模式: 合并云端 {len(existing['directories'])} 个目录 ← {url}")
+        if existing is None:
+            existing = _load_existing_index(index_path)
+            if existing:
+                print(f"  增量模式: 合并到已有 {len(existing['directories'])} 个目录")
+
+    index = {"version": 1, "generated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "base_url": "", "directories": {}}
+    index["base_url"] = (existing.get("base_url") if existing else "") or str(oss_cfg.get("base_url", "")).strip()
 
     total_items = 0
     total_thumbs = 0
@@ -347,7 +390,7 @@ def run_oss_upload(source_dir: str, cfg: dict, dry_run: bool = False) -> dict:
         raise FileNotFoundError("index.json 不存在，请先执行预处理")
 
     bucket_name = cfg.get("bucket", "")
-    prefix = cfg.get("prefix", "")
+    prefix = _key_prefix(cfg.get("prefix", ""))
     endpoint = cfg.get("endpoint", "")
     access_key_id = cfg.get("access_key_id", "")
     access_key_secret = cfg.get("access_key_secret", "")
@@ -485,6 +528,12 @@ async def preprocess_route(request):
     return response
 
 
+async def _fetch_cloud_index():
+    """强刷素材库的云端索引缓存（内存 + gallery/oss_cache/_index.json）。"""
+    from .gallery_oss import _fetch_oss_index
+    return await _fetch_oss_index(force=True)
+
+
 @routes.post("/neo_backyard/upload")
 async def upload_route(request):
     body = await request.json()
@@ -503,14 +552,22 @@ async def upload_route(request):
     await response.prepare(request)
 
     done_event = asyncio.Event()
+    result = {}
 
     def _run():
         try:
-            run_oss_upload(source_dir, cfg, dry_run)
+            result.update(run_oss_upload(source_dir, cfg, dry_run))
         except Exception as e:
             print(f"[ERROR] {e}")
 
     await _sse_stream(response, _run, done_event)
+    # 素材页的云端目录来自 _fetch_oss_index 的缓存，默认 24 小时才重取一次；刚传完
+    # 不强刷的话，新目录要等缓存过期或重启 ComfyUI 才出现在素材页。全跳过时云端没变，不刷。
+    if not dry_run and result.get("uploaded"):
+        try:
+            await _fetch_cloud_index()
+        except Exception as e:
+            print(f"[Neo Studio] 云端索引刷新失败: {e}")
     return response
 
 

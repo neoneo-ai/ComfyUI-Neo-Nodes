@@ -190,6 +190,12 @@ class OfflineServiceTests(_ServerCase):
         self.assertEqual(self.get("/neo_gallery/css")[0], 200)
         self.assertEqual(self.get("/neo_gallery/placeholder.png")[0], 200)
 
+    def test_gallery_sidecar_txt_route_served_offline(self):
+        """云端预设的提示词全文要在桌面端可读：索引里的 txt_content 只有 500 字预览。"""
+        data = json.loads(self.get("/neo_studio/version")[1])
+        self.assertIn("GET /neo_gallery/txt", data["routes"])
+        self.assertEqual(self.get("/neo_gallery/txt?filename=&subfolder=")[0], 400)
+
     def test_model_lists_see_extra_model_paths(self):
         """模型目录要在桌面端进程里可见：extra_model_paths.yaml 只有 ComfyUI 的 main.py 会加载，
         桌面端不自己加载的话 get_filename_list 只扫 <root>/models/，模型落在 extra 路径的机器上

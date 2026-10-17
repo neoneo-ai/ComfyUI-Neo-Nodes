@@ -614,7 +614,8 @@ export class GalleryCard {
             ]) : null,
             image.txt_content ? $el("div", {
                 className: "neo-gallery-collect-item",
-                onclick: () => { this.copyToClipboard(image.name, image.txt_content); this._removeCollectMenu(); }
+                title: t("读取副文件全文后复制，读不到时复制列表预览"),
+                onclick: async () => { const full = await this._fetchFullPrompt(image, subfolder); this.copyToClipboard(image.name, full || image.txt_content); this._removeCollectMenu(); }
             }, [t("\u29C9 复制提示词")]) : null,
             wfItem,
             canDelete ? $el("div", {
@@ -1041,6 +1042,14 @@ export class GalleryCard {
         return `${window.location.protocol}//${window.location.host}/neo_gallery/video?filename=${encodeURIComponent(image.filename)}&subfolder=${encodeURIComponent(subfolder)}`;
     }
 
+    // 列表里的 txt_content 是预览（云端索引 500 字、本地扫描 8 行）：全文要读副文件
+    _fetchFullPrompt(image, subfolder) {
+        const url = `${window.location.protocol}//${window.location.host}/neo_gallery/txt?filename=${encodeURIComponent(image.filename)}&subfolder=${encodeURIComponent(subfolder)}`;
+        return fetch(url).then(r => (r.ok ? r.json() : null))
+            .then(d => (d && d.success && d.content) ? String(d.content) : null)
+            .catch(() => null);
+    }
+
     _fetchBlobUrl(url) {
         return fetch(url)
             .then(resp => { if (!resp.ok) throw new Error(`HTTP ${resp.status}`); return resp.blob(); })
@@ -1105,33 +1114,44 @@ export class GalleryCard {
     }
 
     _lightboxPromptPanel(gallery, image, subfolder) {
+        let promptText = image.txt_content;
         const body = $el("div", { className: "neo-lightbox-panel-body" });
-        const sections = this.gallery.parsePromptSections(image.txt_content);
-        if (sections.length > 0 && sections.some(s => s.label)) {
-            for (const section of sections) {
-                if (section.label) {
-                    body.appendChild($el("div", { className: "neo-lightbox-panel-item" }, [
-                        $el("span", { className: "neo-lightbox-panel-label", textContent: section.label + "\uff1a" }),
-                        $el("span", { className: "neo-lightbox-panel-value", textContent: section.value })
-                    ]));
-                } else if (section.value) {
-                    body.appendChild($el("div", {
-                        textContent: section.value,
-                        style: { marginBottom: "3px", whiteSpace: "pre-wrap" }
-                    }));
+        const renderPrompt = (text) => {
+            body.replaceChildren();
+            const sections = this.gallery.parsePromptSections(text);
+            if (sections.length > 0 && sections.some(s => s.label)) {
+                for (const section of sections) {
+                    if (section.label) {
+                        body.appendChild($el("div", { className: "neo-lightbox-panel-item" }, [
+                            $el("span", { className: "neo-lightbox-panel-label", textContent: section.label + "\uff1a" }),
+                            $el("span", { className: "neo-lightbox-panel-value", textContent: section.value })
+                        ]));
+                    } else if (section.value) {
+                        body.appendChild($el("div", {
+                            textContent: section.value,
+                            style: { marginBottom: "3px", whiteSpace: "pre-wrap" }
+                        }));
+                    }
                 }
+            } else {
+                body.appendChild($el("div", {
+                    textContent: this.gallery.cleanText(text),
+                    style: { whiteSpace: "pre-wrap" }
+                }));
             }
-        } else {
-            body.appendChild($el("div", {
-                textContent: this.gallery.cleanText(image.txt_content),
-                style: { whiteSpace: "pre-wrap" }
-            }));
-        }
+        };
+        renderPrompt(promptText);
+        // 预览先出，全文到达后整段替换；已翻页（面板已销毁）就丢弃这次结果
+        this._fetchFullPrompt(image, subfolder).then((full) => {
+            if (!full || full === promptText || !body.isConnected) return;
+            promptText = full;
+            renderPrompt(full);
+        });
 
         const copyBtn = $el("div", {
             className: "neo-lightbox-panel-btn",
             textContent: "\u29C9 \u590D\u5236\u63D0\u793A\u8BCD",
-            onclick: (e) => { e.stopPropagation(); this.copyToClipboard(image.name, image.txt_content, copyBtn); }
+            onclick: (e) => { e.stopPropagation(); this.copyToClipboard(image.name, promptText, copyBtn); }
         });
 
         const inner = $el("div", { className: "neo-lightbox-panel-inner" }, [

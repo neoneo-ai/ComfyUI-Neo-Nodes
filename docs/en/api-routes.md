@@ -20,6 +20,7 @@ source code.
 | GET | `/neo_gallery/video` | Video stream |
 | GET | `/neo_gallery/media_meta` | Media metadata |
 | GET | `/neo_gallery/image` | Media file |
+| GET | `/neo_gallery/txt` | Full sidecar `.txt` text (list `txt_content` is a preview) |
 | POST | `/neo_gallery/dir_cover_images` | Directory cover images |
 | POST | `/neo_gallery/save_settings` | Save asset settings (custom directories, etc.) |
 | GET | `/neo_gallery/get_settings` | Read asset settings |

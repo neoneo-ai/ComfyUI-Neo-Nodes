@@ -20,6 +20,7 @@ _GALLERY = {
     ("GET", "/neo_gallery/waveform"),
     ("POST", "/neo_gallery/waveform"),
     ("GET", "/neo_gallery/media_meta"),
+    ("GET", "/neo_gallery/txt"),
     ("POST", "/neo_gallery/dir_cover_images"),
     ("GET", "/neo_gallery/get_settings"),
     ("POST", "/neo_gallery/save_settings"),

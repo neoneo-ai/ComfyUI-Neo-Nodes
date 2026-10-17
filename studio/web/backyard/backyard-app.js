@@ -32,8 +32,9 @@ function showView(name) {
 }
 
 // ====== SSE 请求 helper ======
-async function ssePost(url, body, logEl, onDone) {
-    logEl.textContent = "";
+// keepLog: 追加到已有日志（预处理后链式跑上传时，别把上一段日志抹掉）
+async function ssePost(url, body, logEl, onDone, keepLog) {
+    if (!keepLog) logEl.textContent = "";
     const resp = await fetch(url, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -41,13 +42,14 @@ async function ssePost(url, body, logEl, onDone) {
     });
     if (!resp.ok) {
         const err = await resp.json().catch(() => ({ error: resp.statusText }));
-        logEl.textContent = `[ERROR] ${err.error || resp.statusText}`;
+        logEl.textContent += `[ERROR] ${err.error || resp.statusText}`;
         logEl.classList.add("err");
-        return;
+        return false;
     }
     const reader = resp.body.getReader();
     const decoder = new TextDecoder();
     let buf = "";
+    let failed = false;
     while (true) {
         const { done, value } = await reader.read();
         if (done) break;
@@ -57,14 +59,16 @@ async function ssePost(url, body, logEl, onDone) {
         for (const line of lines) {
             if (!line.startsWith("data: ")) continue;
             const payload = JSON.parse(line.slice(6));
-            if (payload.done) { onDone?.(); return; }
+            if (payload.done) { onDone?.(); return !failed; }
             if (payload.msg) {
+                if (payload.msg.includes("[ERROR]")) failed = true;
                 logEl.textContent += payload.msg;
                 logEl.scrollTop = logEl.scrollHeight;
             }
         }
     }
     onDone?.();
+    return !failed;
 }
 
 // ====== 配置页 ======
@@ -224,9 +228,10 @@ function buildPreprocess(el) {
 
     // 操作选项
     const form = $el("div", { className: "by-form" });
-    const dirsInput = $el("input", { type: "text", placeholder: t("留空=全量扫描；填写=只处理这些子目录（空格分隔）") });
+    const dirsInput = $el("input", { type: "text", placeholder: t("留空=全量扫描；填写=只处理这些子目录（空格分隔）；源目录内直接放素材时按增量处理") });
     const sizeInput = $el("input", { type: "number", value: "320", min: "64", max: "1024" });
     const copyCb = $el("input", { type: "checkbox", checked: "true" });
+    const uploadCb = $el("input", { type: "checkbox", checked: "true" });
 
     const r_dirs = $el("div", { className: "by-form-row" });
     r_dirs.appendChild($el("label", { textContent: t("增量目录") }));
@@ -239,6 +244,12 @@ function buildPreprocess(el) {
     r3.appendChild($el("label", { textContent: t("拷贝媒体文件"), style: "min-width:auto;margin-left:16px;" }));
     r3.appendChild(copyCb);
     form.appendChild(r3);
+
+    const r4 = $el("div", { className: "by-form-row" });
+    r4.appendChild($el("label", { textContent: t("完成后上传 OSS") }));
+    r4.appendChild(uploadCb);
+    r4.appendChild($el("span", { className: "by-dir-path-label", textContent: t("已上传过的文件按 ETag 跳过") }));
+    form.appendChild(r4);
 
     const btnRow = $el("div", { className: "by-form-row" });
     const runBtn = $el("button", { className: "by-btn", textContent: t("🚀 执行预处理") });
@@ -265,13 +276,18 @@ function buildPreprocess(el) {
         if (!sourceDir || !outputDir) { logEl.textContent = t("请先在配置页设置源目录和输出目录"); return; }
         runBtn.disabled = true;
         const dirs = dirsInput.value.trim();
-        await ssePost("/neo_backyard/preprocess", {
+        const ok = await ssePost("/neo_backyard/preprocess", {
             source_dir: sourceDir,
             output_dir: outputDir,
             size: parseInt(sizeInput.value) || 320,
             copy_media: copyCb.checked,
             dirs: dirs ? dirs.split(/\s+/) : null,
-        }, logEl, () => { runBtn.disabled = false; });
+        }, logEl);
+        // 预处理失败不上传：那等于把上一轮留下的旧 index.json 推上云端
+        if (ok && uploadCb.checked) {
+            await ssePost("/neo_backyard/upload", { source_dir: outputDir, dry_run: false }, logEl, null, true);
+        }
+        runBtn.disabled = false;
     });
 }
 

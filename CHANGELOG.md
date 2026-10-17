@@ -4,6 +4,15 @@ Notable changes for Neo Studio. Versions are tagged `vX.Y.Z` and published to th
 
 ## [Unreleased]
 
+- **Cloud preset prompts copy the full text, not the preview.** The OSS preset index stores `txt_content` as a
+  500-character preview (`parse_txt_preview(max_chars=500)` in `tools/gallery_preprocess.py`), so the lightbox
+  提示词 panel and 复制提示词 of a cloud item stopped mid-sentence — `095_叛宗剑修` copied 500 of its 2044
+  characters. New `GET /neo_gallery/txt` returns the sidecar `.txt` in full (local read through the shared media
+  resolver, cloud download into the existing category cache); the lightbox renders the preview at once and swaps
+  in the full text when it arrives, and the grid ⋯ menu 复制提示词 copies the full text too. The index preview
+  stays a preview: widening it would double the index every gallery page downloads and force re-uploading the
+  published sidecars.
+
 - **Contributor entry docs.** `CONTRIBUTING.md` / `CONTRIBUTING_ZH.md`, `SECURITY.md`,
   `CODE_OF_CONDUCT.md` / `CODE_OF_CONDUCT_ZH.md` and a pull request template, plus a CI gate that runs
   `studio/tests` and `npm test` on every pull request. No plugin code changed.

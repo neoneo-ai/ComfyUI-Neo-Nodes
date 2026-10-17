@@ -111,3 +111,11 @@ python tools/gallery_deploy_oss.py --source <output_dir> --bucket <bucket> --pre
 ```
 
 部署后的 OSS 源通过 `configs/oss_presets.json` 配置，运行时由 `gallery_oss.py` 拉取到 `gallery/oss_cache/`。
+
+Backyard 页面（`/neo-studio-backyard`）走同一套增量语义：预处理页的源目录按数据根解析，源目录内直接放素材
+（`data/gallery/presets/仙侠玄幻人物` 这种单个预设目录）时按增量处理；增量合并基准优先取
+`configs/oss_presets.json -> index_url` 的云端 `index.json`，拉不到才回退输出目录里的本地 `index.json`，
+所以本地从没跑过预处理也不会把云端其余目录冲掉。勾选「完成后上传 OSS」会在预处理后接着上传，
+ETag 相同的文件跳过；上传的 key 前缀会补尾部 `/`，前缀写成 `/neo/presets` 也对得上云端的
+`neo/presets/index.json`。上传写入新文件后会强刷一次素材库的云端索引缓存（与 `/neo_gallery/sync_oss`
+同源），新目录立刻出现在素材页；不刷的话要等 `sync_interval_hours`（默认 24 小时）缓存过期才看得见。

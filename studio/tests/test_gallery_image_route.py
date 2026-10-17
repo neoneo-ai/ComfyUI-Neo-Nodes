@@ -5,9 +5,13 @@
 子目录可能同时存在于 input 与 output（实测 input/NeoAgent 存导演锚点帧、output/NeoAgent
 存生成图）。命中其中一个 base 后就只在它下面找文件、找不到直接 404，会让另一个根里的
 图点不开：卡片缩略图走共享解析器正常，灯箱/大图走 /neo_gallery/image 却 404。
+
+灯箱「提示词」全文走 /neo_gallery/txt：列表项的 txt_content 只是预览（云端索引 500 字、
+本地扫描 8 行），副文件原文要单独读，否则「复制提示词」复制的是截断文本。
 """
 
 import asyncio
+import json
 import os
 import sys
 import tempfile
@@ -143,6 +147,15 @@ def _image(filename, subfolder):
         loop.close()
 
 
+def _txt(filename, subfolder):
+    loop = asyncio.new_event_loop()
+    try:
+        return loop.run_until_complete(
+            gallery.view_txt(_Request({"filename": filename, "subfolder": subfolder})))
+    finally:
+        loop.close()
+
+
 class ImageRouteRootFallbackTests(unittest.TestCase):
     """base 目录里找不到文件时必须再走共享解析器，而不是直接 404。"""
 
@@ -168,3 +181,22 @@ class ImageRouteRootFallbackTests(unittest.TestCase):
 
     def test_missing_file_still_404(self):
         self.assertEqual(_image("nope.png", "NeoAgent").status, 404)
+
+
+class TxtRouteSidecarTests(unittest.TestCase):
+    """/neo_gallery/txt 返回副文件全文，共享解析器解析不到时 404。"""
+
+    def setUp(self):
+        _write("NeoAgent/shot.png", b"output-shot", root=_OUTPUT)
+        _write("NeoAgent/shot.txt", "宗门演武台、剑冢、云海崖".encode("utf-8"), root=_OUTPUT)
+
+    def test_sidecar_text_returns_full_content(self):
+        resp = _txt("shot.png", "NeoAgent")
+        self.assertEqual(resp.status, 200)
+        self.assertEqual(json.loads(resp.body.decode())["content"], "宗门演武台、剑冢、云海崖")
+
+    def test_missing_sidecar_is_404(self):
+        self.assertEqual(_txt("ref_abc.png", "NeoAgent").status, 404)
+
+    def test_empty_filename_is_400(self):
+        self.assertEqual(_txt("", "NeoAgent").status, 400)

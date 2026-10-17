@@ -18,6 +18,7 @@
 | GET | `/neo_gallery/video` | 视频流 |
 | GET | `/neo_gallery/media_meta` | 媒体元数据 |
 | GET | `/neo_gallery/image` | 媒体文件 |
+| GET | `/neo_gallery/txt` | 副文件 `.txt` 全文（列表里的 `txt_content` 是预览） |
 | POST | `/neo_gallery/dir_cover_images` | 目录封面图 |
 | POST | `/neo_gallery/save_settings` | 保存素材设置（自定义目录等） |
 | GET | `/neo_gallery/get_settings` | 读取素材设置 |

@@ -2588,6 +2588,63 @@ async def media_meta(request):
     return web.json_response(_json_safe(result))
 
 
+@routes.get("/neo_gallery/txt")
+async def view_txt(request):
+    """Serve the full sidecar .txt for one gallery item.
+
+    The list payload carries txt_content as a preview (the OSS index caps it at 500
+    chars, the local scan at 8 lines), so the lightbox and the copy-prompt action
+    need the sidecar file itself.
+    """
+    filename = request.rel_url.query.get("filename", "")
+    subfolder = request.rel_url.query.get("subfolder", "")
+    if not filename or ".." in filename or ".." in subfolder:
+        return web.json_response({"success": False, "error": "filename required"}, status=400)
+
+    txt_name = Path(filename).stem + ".txt"
+    sub_lower = subfolder.lower()
+
+    oss_category, oss_subdir = None, ""
+    if sub_lower.startswith("cloud presets/"):
+        oss_category = OSS_CATEGORY_PRESETS
+        oss_subdir = sub_lower[len("cloud presets/"):]
+    elif sub_lower.startswith("storyboard/presets/"):
+        oss_category = OSS_CATEGORY_GRID
+        oss_subdir = sub_lower.split("/", 2)[2]
+    elif sub_lower.startswith("charactersheet/presets/"):
+        oss_category = OSS_CATEGORY_CHARACTER
+        oss_subdir = sub_lower.split("/", 2)[2]
+    if oss_subdir and _is_oss_enabled():
+        oss_rel = _find_in_oss_index(filename, oss_subdir, oss_category)
+        if not oss_rel:
+            from urllib.parse import unquote as _uq
+            oss_rel = _find_in_oss_index(_uq(filename), oss_subdir, oss_category)
+        if not oss_rel:
+            return web.json_response({"success": False, "error": "not in oss index"}, status=404)
+        cached = await _download_oss_file(str(Path(oss_rel).with_suffix(".txt")), oss_category)
+        if not cached:
+            return web.json_response({"success": False, "error": "sidecar download failed"}, status=404)
+        content = await asyncio.to_thread(_read_text_file, str(cached))
+        return web.json_response(_json_safe({"success": True, "content": content}))
+
+    def _resolve_txt_path() -> Path | None:
+        if not subfolder or sub_lower == "presets":
+            cand = PRESETS_DIR / txt_name
+        elif sub_lower == "custom":
+            cand = CUSTOM_DIR / txt_name
+        elif sub_lower.startswith("presets/"):
+            cand = PRESETS_DIR.joinpath(*[p for p in subfolder.split("/")[1:] if p], txt_name)
+        else:
+            cand = _find_source_media(txt_name, subfolder)
+        return cand if cand and cand.is_file() else None
+
+    path = await asyncio.to_thread(_resolve_txt_path)
+    if not path:
+        return web.json_response({"success": False, "error": "no sidecar file"}, status=404)
+    content = await asyncio.to_thread(_read_text_file, str(path))
+    return web.json_response(_json_safe({"success": True, "content": content}))
+
+
 @routes.get("/neo_gallery/image")
 async def view_image(request):
     """Serve gallery images by filename."""
