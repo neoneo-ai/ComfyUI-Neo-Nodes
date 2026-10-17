@@ -4,6 +4,20 @@ Notable changes for Neo Studio. Versions are tagged `vX.Y.Z` and published to th
 
 ## [Unreleased]
 
+## [1.3.0] - 2026-10-17
+
+- **Backyard OSS config save round-trips.** The config form threw `inputs[key].select is not a function` on load
+  and saved nothing: field type was probed with `typeof inputs[key] === "object"`, and every `HTMLInputElement`
+  carries a `select()` method, so the plain text fields matched as combo objects and the directory combos matched
+  as plain fields. Directory fields now live in their own `dirInputs` map, the save body carries every field, and
+  a secret field left empty keeps the saved value. Server side, a submitted value containing `*` was dropped as
+  long as the field name appeared in the masked response — editing a masked key into a real key was thrown away.
+  It is dropped only when it equals the current mask exactly. Covered by `studio/tests/test_backyard_config.py`.
+
+- **`HTMLCollection` spread removed from the frontend.** `[...collection]` in director, gallery-gen,
+  gallery-masonry, llm-chat, prompts, skill, slash-picker and `js/core/dom-utils.js` is now `Array.from(...)`:
+  WebView2's `HTMLCollection` is not iterable, so one empty container became a page-wide TypeError.
+
 - **Skills page now wears the shell palette.** The page mounts the shared skill manager, which is modal-born:
   `prompts.css` gives it a `#1a1a2a` panel, a `#1a2a3a` title bar, `#5090cc` blue highlights and `#1a3a5a`
   small blue buttons, so next to the grey Assets / Paint / Director / Settings pages it read as a dropped-in

@@ -24,7 +24,7 @@ logs always go to `stderr`.
 
 ```powershell
 python studio\mcp_server.py --selftest
-# Neo Studio MCP Server v1.2.0 · 20 tools: neo_status, list_skills, ...
+# Neo Studio MCP Server v1.3.0 · 20 tools: neo_status, list_skills, ...
 ```
 
 ### 2. Add it to the MCP client
