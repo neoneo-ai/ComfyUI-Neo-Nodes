@@ -5,8 +5,15 @@ on:
   push:
     tags:
       - "v*"
-  release:
-    types: [published]
+
+# Registry 发布只要读代码加一个 token，不给写权限
+permissions:
+  contents: read
+
+# tag push 是唯一自动触发口：release published 会让同一个 tag 再发一次 Registry 包
+concurrency:
+  group: publish-node
+  cancel-in-progress: false
 
 jobs:
   publish-node:
