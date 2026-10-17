@@ -182,7 +182,10 @@ class StandardizeTests(unittest.TestCase):
         (self.dir / "c.heic").write_bytes(b"fake heic")
         out = lora_tag._standardize_dir(self.dir)
         self.assertEqual(out["skipped"], ["c.heic"])
-        self.assertTrue((self.dir / "c.heic").exists())
+        self.assertEqual(out["converted"], [])
+        # 缺 pillow-heif 只是跳过转换：heic 仍参与顺序编号，改名不删文件
+        self.assertEqual((self.dir / "002.heic").read_bytes(), b"fake heic")
+        self.assertFalse((self.dir / "c.heic").exists())
 
     def test_backup_copies_dir_and_replaces_old(self):
         _mk_png(self.dir / "a.png")
