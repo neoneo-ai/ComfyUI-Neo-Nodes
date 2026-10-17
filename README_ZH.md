@@ -259,3 +259,11 @@ collections portrait 10000+ 精美提示词来源：[civitai.com/models/2231696]
 ## 开发者文档
 
 开发相关内容（项目结构、后端模块、API 路由、节点注册、测试、桌面端内部机制）见 [Developer.md](Developer.md)。
+
+---
+
+## 参与开发
+
+fork 之后直接提 Pull Request 即可，不需要加入组织。环境搭建、测试命令、节点与路由清单、提交规范见
+[CONTRIBUTING_ZH.md](CONTRIBUTING_ZH.md)；漏洞上报与密钥涂改规则见 [SECURITY.md](SECURITY.md)。
+

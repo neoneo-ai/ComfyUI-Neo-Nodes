@@ -4,6 +4,10 @@ Notable changes for Neo Studio. Versions are tagged `vX.Y.Z` and published to th
 
 ## [Unreleased]
 
+- **Contributor entry docs.** `CONTRIBUTING.md` / `CONTRIBUTING_ZH.md`, `SECURITY.md`,
+  `CODE_OF_CONDUCT.md` / `CODE_OF_CONDUCT_ZH.md` and a pull request template, plus a CI gate that runs
+  `studio/tests` and `npm test` on every pull request. No plugin code changed.
+
 ## [1.3.0] - 2026-10-17
 
 - **Upgrading from `comfyui-neo-nodes`: disable the old folder yourself.** Nothing in this release touches

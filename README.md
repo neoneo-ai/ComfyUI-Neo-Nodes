@@ -198,3 +198,12 @@ Version history: [CHANGELOG.md](CHANGELOG.md). SPDX-License-Identifier: Apache-2
 
 Project structure, backend modules, API routes, node registration, tests, and the Studio desktop internals
 (offline service, capability table, drag loop, launcher config): [Developer_EN.md](Developer_EN.md).
+
+---
+
+## Contributing
+
+Fork and open a pull request — no organization membership needed. Setup, the test commands, the node and route
+checklists and the commit rules: [CONTRIBUTING.md](CONTRIBUTING.md). Vulnerability reporting and the key
+redaction rule: [SECURITY.md](SECURITY.md).
+
