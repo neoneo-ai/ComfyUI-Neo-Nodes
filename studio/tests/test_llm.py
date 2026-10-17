@@ -1522,6 +1522,9 @@ class TestNativeBackend(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
+        import torch
+        if not torch.cuda.is_available():
+            raise unittest.SkipTest("native 后端要在显存里真跑文本生成模型，无 CUDA 设备的机器跑不了")
         cls._comfy_saved = _drop_stubs(_COMFY_PREFIX)
         cls._fp_saved = _drop_stubs(_FP_PREFIX)
         # llm_mod.folder_paths 是 import 期绑定的（可能是别的测试文件留下的桩），
