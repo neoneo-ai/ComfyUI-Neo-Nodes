@@ -2348,6 +2348,18 @@ class PluginSyncTests(unittest.TestCase):
         self.assertEqual(self._index().read_text(encoding="utf-8"), "old")
 
 
+# git 取数在导入期完成：跑完窗口几何那批用例后，进程里的子进程会全部启动即没
+# （git 与 python -c 一样返回 0xC000013A），在测试执行期调 git 只能读到空输出。
+_TRACKED_CONFIGS = frozenset(subprocess.run(
+    ["git", "-C", str(_PLUGIN_DIR), "ls-files", "configs"], capture_output=True, text=True).stdout.split())
+_IGNORED_CONFIGS = frozenset(
+    f"configs/{name}" for name in
+    ("remote_llm_config.json", "backyard_oss.json", "model_hub.json", "video_gen.json",
+     "image_gen.json", "gallery_settings.json", "bookmarks.json", "gallery_dim_cache.json")
+    if subprocess.run(["git", "-C", str(_PLUGIN_DIR), "check-ignore", "-q", f"configs/{name}"],
+                      capture_output=True).returncode == 0)
+
+
 class EmbeddedConfigsTests(unittest.TestCase):
     """进包的 configs 只能是预设：用户配置与密钥不进包，也不覆盖用户已有文件。"""
 
@@ -2356,16 +2368,10 @@ class EmbeddedConfigsTests(unittest.TestCase):
                   "image_gen.json", "gallery_settings.json", "bookmarks.json", "gallery_dim_cache.json")
 
     def test_tracked_configs_are_presets_only(self):
-        out = subprocess.run(["git", "-C", str(_PLUGIN_DIR), "ls-files", "configs"],
-                             capture_output=True, text=True)
-        tracked = {line.strip() for line in out.stdout.splitlines() if line.strip()}
-        self.assertEqual(tracked, {f"configs/{n}" for n in self.PRESETS})
+        self.assertEqual(_TRACKED_CONFIGS, {f"configs/{n}" for n in self.PRESETS})
 
     def test_user_configs_are_ignored(self):
-        for name in self.USER_FILES:
-            out = subprocess.run(["git", "-C", str(_PLUGIN_DIR), "check-ignore", "-q", f"configs/{name}"],
-                                 capture_output=True)
-            self.assertEqual(out.returncode, 0, f"configs/{name} 必须被 gitignore")
+        self.assertEqual(_IGNORED_CONFIGS, {f"configs/{n}" for n in self.USER_FILES})
 
     def test_exe_bundle_takes_tracked_files_only(self):
         # 内置副本的边界就是「git 已跟踪」：用户配置与密钥不在跟踪列表里，进不了 exe

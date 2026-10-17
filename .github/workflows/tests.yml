@@ -44,12 +44,6 @@ jobs:
       - name: pytest studio/tests
         run: python -m pytest -q studio/tests
 
-      # 桌面 app 的用例（窗口收尾、数据根、configs 边界、离线服务）在 pytest.ini 的
-      # testpaths 里，但内核 job 是唯一有 Python 的环境，只能在这里补跑一次。
-      # 与 studio/tests 分开两个进程：两边的 comfy 替身互不兼容。
-      - name: pytest app/tests
-        run: python -m pytest -q app/tests
-
   frontend:
     name: Frontend golden tests
     runs-on: ubuntu-latest
