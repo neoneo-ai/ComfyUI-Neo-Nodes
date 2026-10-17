@@ -34,7 +34,13 @@ Notable changes for Neo Studio. Versions are tagged `vX.Y.Z` and published to th
   which only merges consecutive segments. A new recipe now opens on **🎞️ Storyboard timeline**, a blank one shows a
   one-line guide to the Storyboard page that disappears once a second segment exists, and with a single segment
   "chunk seconds" is hidden while the Storyboard page replaces its per-segment comparison table and batch-optimize
-  button with a one-line hint. Adding a second segment brings both back.
+  button with a one-line hint. Adding a second segment brings both back. The segment card itself is flat now —
+  transparent background, 1px border, 4px radius, a fixed-height (≤168px) frame thumbnail instead of a
+  full-height drop area, and VS Code-style inputs (2px radius, blue focus border, and a fill clearly darker than
+  the panel so a field reads as something you can type into). The recipe list on the left and the film-generation
+  panel under the editor follow the same flat treatment (transparent fill, 1px `#2d2d2d` border, 4px radius;
+  segment chips are outline-only and readouts use a darker placeholder fill), so the list, the editor and the
+  output panel no longer look like three different designs.
   `studio/tests/js/director-editor-single.test.mjs` covers the landing tab, the guide, and both single/multi states.
 
 - **A character-image directory now defaults to full reference when you build a director recipe from it.** In the

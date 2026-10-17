@@ -113,10 +113,10 @@
     display: flex;
     flex-direction: column;
     gap: 8px;
-    padding: 8px;
-    background: #1e1e1e;
-    border: 1px solid #333;
-    border-radius: 8px;
+    padding: 8px 10px;
+    background: transparent;   /* 与段卡片同一套扁平观感：底色交给面板，卡片只留一条细边 */
+    border: 1px solid #2d2d2d;
+    border-radius: 4px;
 }
 
 .neo-recipes-card:focus-visible {
@@ -127,7 +127,7 @@
 /* 选中态（Studio 导演页：点卡片喂给整片生成区） */
 .neo-recipes-card-selected {
     border-color: #4a7bd0;
-    background: #212531;
+    background: rgba(74, 123, 208, 0.08);   /* 选中只上一层淡蓝，不再整块换灰底 */
 }
 
 .neo-recipes-card-media {
@@ -146,7 +146,7 @@
     object-fit: cover;
     border-radius: 4px;
     display: block;
-    background: #2a2a2a;
+    background: #141414;   /* 图片未就绪时的空位与输入井同色，不再是一块浅灰 */
 }
 
 .neo-recipes-card-media.single {
@@ -162,7 +162,7 @@
     height: auto;
     width: auto;
     margin: 0 auto;
-    border-radius: 8px;
+    border-radius: 4px;
 }
 
 .neo-recipes-card-actions {
@@ -614,6 +614,17 @@
     border-radius: 10px;
     box-shadow: 0 8px 40px rgba(0, 0, 0, 0.5);
     pointer-events: auto;   /* 面板自身仍可交互 */
+}
+
+/* 输入井：编辑器里的文本框 / 下拉框统一压深一档（比面板 / 桌面页底色都更暗），一眼看得出「这里能输入」。
+   圆角 / 尺寸仍由各控件自己的规则决定，这里只改底色与边框。面板类在浮层与内嵌两种宿主下都存在。 */
+.neo-director-panel textarea,
+.neo-director-panel select,
+.neo-director-panel input[type="text"],
+.neo-director-panel input[type="number"],
+.neo-director-panel input:not([type]) {
+    background-color: #0d0d0d;
+    border-color: #3c3c3c;
 }
 
 /* 桌面端 Studio 内嵌：编辑器铺满宿主容器，浮层与窗口控件（⛶ 放大 / 右下角缩放 / 标题栏拖动）都不出现 */
@@ -1130,17 +1141,16 @@
     height: 28px;
     resize: none;
     background: #1e1e1e;
-    border: 1px solid #3a3a3a;
-    border-radius: 6px;
+    border: 1px solid #3c3c3c;
+    border-radius: 2px;
     color: #ddd;
     font-size: 12px;
     padding: 4px 8px;
     font-family: inherit;
 }
 
+/* 焦点样式与首段提示词框共用一条规则（见 .neo-director-prompt:focus），这里只管文字提亮 */
 .neo-director-mod-ta:focus {
-    outline: none;
-    border-color: #555;
     color: #e0e0e0;
 }
 
@@ -1171,11 +1181,11 @@
 .neo-director-seg {
     display: flex;
     flex-direction: column;
-    gap: 5px;
-    padding: 8px;
-    background: #262626;
-    border: 1px solid #3a3a3a;
-    border-radius: 8px;
+    gap: 6px;
+    padding: 8px 10px;
+    background: transparent;   /* 扁平：段卡片只留一条细分隔，不再是一整块灰面板（VS Code 面板观感） */
+    border: 1px solid #2d2d2d;
+    border-radius: 4px;
     flex: 1;
     min-height: 0;    /* 卡片填满 segs；提示词区伸缩，首帧资产区钉在卡片底部 */
 }
@@ -1257,12 +1267,14 @@
     min-height: 0;
 }
 .neo-director-frame-col > .neo-director-setup-seg-thumb {
-    flex: 1 1 auto;   /* 首帧随行高拉伸（空态同样拉伸，成为大拖放区） */
+    flex: 0 1 auto;   /* 不再随卡片高度无限拉伸：空态是一块小拖放区，有图时按画面比例显示 */
+    min-height: 96px;
+    max-height: 168px;
 }
 .neo-director-frame-col .neo-director-setup-seg-thumb img {
     width: 100%;
     height: 100%;
-    object-fit: cover;   /* 铺满左栏高度（超出部分裁切），图片下方不留空白 */
+    object-fit: contain;   /* 定高缩略：整帧可见（不再为填满高度裁掉上下），与 VS Code 的媒体预览一致 */
 }
 
 /* 尾帧扩展行（左栏底部）：按钮常驻（已设时带缩略指示）；展开后出现尾帧槽位 */
@@ -1737,10 +1749,17 @@
     min-height: 44px;
     background: #1e1e1e;
     color: #ddd;
-    border: 1px solid #3a3a3a;
-    border-radius: 6px;
+    border: 1px solid #3c3c3c;
+    border-radius: 2px;
     padding: 6px 8px;
     font-size: 12px;
+}
+
+/* 焦点态向 VS Code 输入框看齐：一圈细蓝边，不用浏览器默认 outline */
+.neo-director-prompt:focus,
+.neo-director-mod-ta:focus {
+    outline: none;
+    border-color: #007acc;
 }
 
 .neo-director-storyboard-btn {
@@ -1951,8 +1970,8 @@
     gap: 8px;
     margin: 8px 0 4px;
     padding: 6px 10px;
-    border: 1px dashed #3a3a3a;
-    border-radius: 6px;
+    border: 1px dashed #333;
+    border-radius: 4px;
     color: #9a9a9a;
     font-size: 12px;
 }
@@ -1960,8 +1979,8 @@
 .neo-director-single-guide-btn {
     flex: none;
     padding: 2px 8px;
-    border: 1px solid #3a3a3a;
-    border-radius: 4px;
+    border: 1px solid #3c3c3c;
+    border-radius: 2px;
     background: transparent;
     color: #7aa2ff;
     font-size: 12px;
@@ -2092,10 +2111,10 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    border-radius: 6px;
+    border-radius: 4px;
     overflow: hidden;
     background: #1c1c1c;
-    border: 1px dashed #3a3a3a;
+    border: 1px dashed #333;
 }
 
 /* 悬停右上角 ✕：清除该段分镜图记录（不影响已选首帧）；不悬停时不占位、不误点 */
